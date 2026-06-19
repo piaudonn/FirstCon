@@ -25,7 +25,7 @@ SigninLogs
 ) on UserPrincipalName
 ```
 
-## GeoGencing block
+## Geo-Fencing block
 
 This query finds sign-in attempts to OfficeHome from unmanaged devices that were blocked by a geo-fencing Conditional Access Policy. While the block prevented access, the user's password is still compromised (Conditional Access evaluation only occurs after first-factor authentication succeeds). A geo-fencing block confirms the credentials are valid but used from an unauthorized location.
 
@@ -48,6 +48,7 @@ SigninLogs
 )
 ```
 
+> The same logic could be applied for CAP failures because of device requirements.
 
 ## Self-Remediated Risk from Unmanaged Devices
 
@@ -168,4 +169,100 @@ union (
             SuspiciousLogonTime = s1.ActionTime, SuspiciousMFARegistration = s2.ActionTime ;
     )
 ) | project SuspiciousLogonTime, SuspiciousMFARegistration, NewInboxRuleTime = ActionTime, RuleParameters
+```
+
+
+## Suspiciously Regular Token Refresh Patterns
+
+This query identifies sessions originating from the OfficeHome application (configurable to other apps) and then examines non-interactive token refreshes between Outlook and Exchange Online within those sessions. It flags sessions where consecutive token requests consistently fall within a 55- to 65-second interval ; a cadence too uniform to be driven by normal user activity, suggesting automated tooling such as an AiTM proxy replaying stolen tokens.
+
+**Kool-ql stuff**
+- [partition](https://learn.microsoft.com/en-us/kusto/query/partition-operator)
+- [prev()](https://learn.microsoft.com/en-us/kusto/query/prev-function)
+- [row_cumsum()](https://learn.microsoft.com/en-us/kusto/query/row-cumsum-function)
+
+
+```kql
+let ssid = SigninLogs
+| where TimeGenerated > ago(180d)
+| where AppDisplayName == "OfficeHome"
+| where isempty(DeviceDetail.deviceId)
+| where ResultType in (0,50140)
+//| where RiskLevelDuringSignIn != "none"
+| distinct SessionId //, UserPrincipalName
+;
+AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(180d)
+| where SessionId in (ssid)
+| where ResultType == 0
+| where AppDisplayName == "Microsoft Outlook"
+| where ResourceDisplayName == "Office 365 Exchange Online"
+| project CreatedDateTime, SessionId, UserPrincipalName, AppDisplayName, ResourceDisplayName, UserAgent
+| partition hint.strategy=native by SessionId (
+    order by CreatedDateTime asc
+    | extend Delta = ( next(CreatedDateTime) - CreatedDateTime ) / 1s
+    | extend in_range = Delta between (55 .. 65)
+    //| extend break = iif(in_range == false  or prev(in_range) == false, 1, 0)   // optional: max jump
+    | extend group_id = row_cumsum(in_range)
+| summarize 
+    start_time = min(CreatedDateTime),
+    end_time = max(CreatedDateTime),
+    count = count(),
+    make_set(UserAgent),
+    min_val = min(Delta),
+    max_val = max(Delta)
+    by group_id, SessionId, UserPrincipalName
+)
+| where ['count'] > 1
+```
+
+## User Agent Switch Within an Outlook Session
+
+This query detects sessions where the user agent changes mid-session for Outlook operating as a public client. A legitimate session typically maintains a consistent user agent throughout its lifetime. A shift in user agent within the same session suggests the token may have been exfiltrated and replayed from a different client or tool.
+
+
+```kql
+AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(14d)
+| where ResultType == 0
+| where isempty(todynamic(DeviceDetail).deviceId)
+| where AppDisplayName == "Microsoft Outlook"
+| where ResourceDisplayName == "Office 365 Exchange Online"
+| summarize UserAgents = make_set(UserAgent) by SessionId, AppDisplayName, ResourceDisplayName
+| where array_length(UserAgents) > 1
+```
+
+
+## Session Travel Distance
+
+This query calculates the cumulative geographic distance (in kilometers) between consecutive sign-in events within the same session. By summing the distance traveled across all token requests in a session, it highlights sessions exhibiting impossible or improbable travel - a weak indicator that the session token is being used from multiple distinct locations, such as when a stolen token is replayed from a different geographic origin.
+
+
+**Kool-ql stuff**
+- [partition](https://learn.microsoft.com/en-us/kusto/query/partition-operator)
+- [prev()](https://learn.microsoft.com/en-us/kusto/query/prev-function)
+- [row_cumsum()](https://learn.microsoft.com/en-us/kusto/query/row-cumsum-function)
+- [geo_distance_2points()](https://learn.microsoft.com/en-us/kusto/query/geo-distance-2points-function)
+ 
+
+```kql
+AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(90d)
+| where ResultType == 0
+| extend Latitude = toreal(todynamic(LocationDetails).geoCoordinates.latitude)
+| extend Longitude = toreal(todynamic(LocationDetails).geoCoordinates.longitude)
+| project CreatedDateTime, Longitude, Latitude, SessionId
+| partition hint.strategy=native by SessionId (
+    order by CreatedDateTime asc 
+    | extend Distance = geo_distance_2points(Longitude, Latitude, prev(Longitude), prev(Latitude))
+    | extend Track = row_cumsum(Distance) //could be reset if time difference is too large
+    | project CreatedDateTime, SessionId, Distance, Track
+)
+| where Track > 0
+| summarize max(Track), min(CreatedDateTime), max(CreatedDateTime) by SessionId
+| lookup (
+    AADNonInteractiveUserSignInLogs 
+    | where TimeGenerated > ago(90d)
+    | summarize Locations = make_list(Location) by SessionId
+) on SessionId
 ```
