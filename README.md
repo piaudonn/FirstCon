@@ -11,6 +11,26 @@ Adversary-in-the-Middle (AiTM) attacks continue to evolve, making it critical fo
 - [**Hunting Queries**](QUERIES.md) – /Almost/ ready-to-use queries for detecting AiTM attack patterns in your environment.
 - **Additional Resources** – Supplementary materials and references shared during the session.
 
+
+## Takeaways 🎒
+
+- Send your logs to an analytics platform (in the Microsoft world, it can be: Log Analytics (or Sentinel), Azure Data Explorer,...)
+- Enable phish resistant methods
+  - Windows Hello for Business for Windows users
+  - Platform SSO for Mac users
+  - FIDO2 keys for anyone (at least admins)
+  - Device-bound passkeys with Authenticator App for anyone 
+  - Start with admins
+- Use risk-based policy to enforce phish resistant on-risk only
+- Best effort Conditional Access Policy strategy is worth it:
+  - device requirement
+  - geofencing
+- Restrict conditions for MFA enrolment with CAP
+
+- Hunt for failed AitM (failed signin because of GeoFencing or device requirement)
+- 🙈 don’t forget to review your closed alerts… (if they are self-remediated without phosh-resistant MFA)
+
+
 ## 🧜‍♀️ Go with the flow 
 
 

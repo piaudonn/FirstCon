@@ -1,4 +1,12 @@
-Queries and mentionned applied strategies in no particular order. 
+# Hunting Queries
+
+> **Disclaimer:** These queries are starting points to give you ideas and empower you to explore your own telemetry, create detections, build hunting queries, and more. They might work as-is, but they will likely need to be customized for your environment. If you need help adapting them, open an issue — happy to help!
+>
+> Each section also highlights interesting KQL features (the **Kool-ql stuff**) to showcase useful operators and functions you might not use every day.
+
+---
+
+Queries and mentioned strategies in no particular order.
 
 ## Good AitM candidates
 
